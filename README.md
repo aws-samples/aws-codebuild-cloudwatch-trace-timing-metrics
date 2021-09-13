@@ -11,7 +11,7 @@ This is a Proof of Concept (POC) implementation of custom tracing metrics in AWS
 ### Using the AWS Command Line Interface (CLI)
 
 ```shell
-aws cloudformation create-stack --stack-name codebuild-metrics-poc --template-body file://codebuild_project.yml --capabilities CAPABILITY_IAM
+aws cloudformation create-stack --stack-name codebuild-metrics-poc --template-body file://codebuild_cloudwatch_timing_metrics.yml --capabilities CAPABILITY_IAM
 ```
 
 ### Using the AWS Console
@@ -19,7 +19,7 @@ aws cloudformation create-stack --stack-name codebuild-metrics-poc --template-bo
 1. Navigate to the **CloudFormation** Service
 2. Select **Create stack** -> **with new resources (standard)
 3. Select **Template is ready**, then **Upload a template file**
-4. Select **choose file** and navigate to the `codebuild_project.yml` file in this repository.
+4. Select **choose file** and navigate to the `codebuild_cloudwatch_timing_metrics.yml` file in this repository.
 5. Enter `codebuild-metrics-poc` as the **Stack name**, then click **Next**
 6. All defaults should be fine on the next screen for the purposes of this POC deployment, so click **Next**
 7. Under **Capabilities**, check the box for **I acknowledge that AWS CloudFormation might create IAM resources.**, since this stack creates two IAM roles: a CodeBuild service role for the project to use, and an Amazon EventBridge service role to give our time-based rule access to start the build.
