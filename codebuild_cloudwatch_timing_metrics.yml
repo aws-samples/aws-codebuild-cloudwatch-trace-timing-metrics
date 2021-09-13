@@ -1,0 +1,165 @@
+---
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: A PoC for publishing trace timing metrics to Amazon CloudWatch in an AWS CodeBuild project
+
+Resources:
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties: 
+      Artifacts: 
+        Type: NO_ARTIFACTS
+      Cache:
+        Type: LOCAL
+        Modes: 
+          - LOCAL_DOCKER_LAYER_CACHE
+      ConcurrentBuildLimit: 5
+      Description: CodeBuild POC with custom CloudWatch metrics
+      Environment: 
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        Type: LINUX_CONTAINER
+        PrivilegedMode: False
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Ref AWS::StackName
+          Status: ENABLED
+      Name: !Ref AWS::StackName
+      ServiceRole: !Ref CodeBuildRole
+      Source: 
+        Type: NO_SOURCE
+        BuildSpec: !Sub |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - export MyCustomTraceStart=$(date +%s)
+                - sleep $(( ( RANDOM % 10 )  + 1 ))
+                - exit $(( RANDOM % 2 ))
+              finally:
+                - export MyCustomTraceEnd=$(date +%s)
+                - export MyCustomTraceDuration=$(( MyCustomTraceEnd - MyCustomTraceStart ))
+                - echo "MyCustomTrace took $MyCustomTraceDuration seconds to complete"
+                - aws cloudwatch put-metric-data --metric-name Duration --namespace CodeBuildCustomTraces --unit Seconds --value $(( MyCustomTraceEnd - MyCustomTraceStart )) --dimensions ProjectName=${AWS::StackName},BuildStatus=$CODEBUILD_BUILD_SUCCEEDING,TraceId=MyCustomTrace
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName: CodeBuildCloudWatch
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${AWS::StackName}:*
+              - Action: cloudwatch:PutMetricData
+                Effect: Allow
+                Resource: '*'
+  CloudWatchDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties: 
+      DashboardName: !Ref AWS::StackName
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "height": 3,
+              "width": 18,
+                "y": 0,
+                "x": 0,
+                "type": "metric",
+                "properties": {
+                  "metrics": [
+                    [ "AWS/CodeBuild", "Builds", "ProjectName", "${CodeBuildProject}", { "id": "m1", "label": "Total Builds" } ],
+                    [ { "expression": "m2 / m1", "label": "Build Failure Rate (%)", "id": "e1", "region": "${AWS::Region}", "period": 60 } ],
+                    [ "AWS/CodeBuild", "FailedBuilds", "ProjectName", "${CodeBuildProject}", { "id": "m2", "visible": false } ],
+                    [ ".", "SucceededBuilds", ".", ".", { "id": "m3", "label": "Succeeded Builds", "visible": false } ],
+                    [ ".", "QueuedDuration", ".", ".", { "id": "m4", "stat": "Average", "label": "Average time in queue" } ],
+                    [ "...", { "id": "m5", "stat": "Maximum", "label": "Maximum time in queue" } ]
+                  ],
+                  "view": "singleValue",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 60,
+                  "setPeriodToTimeRange": true,
+                  "title": "Overview"
+                }
+              },
+              {
+                "height": 6,
+                "width": 18,
+                "y": 3,
+                "x": 0,
+                "type": "metric",
+                "properties": {
+                  "metrics": [
+                    [ "CodeBuildCustomTraces", "Duration", "ProjectName", "${CodeBuildProject}", "BuildStatus", "1", "TraceId", "MyCustomTrace", { "label": "successful runs" } ],
+                    [ "...", "0", ".", ".", { "label": "failed runs" } ]
+                  ],
+                  "view": "timeSeries",
+                  "stacked": true,
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 60,
+                  "title": "Custom trace time"
+                }
+              },
+              {
+                "type": "log",
+                "x": 0,
+                "y": 9,
+                "width": 24,
+                "height": 6,
+                "properties": {
+                  "query": "SOURCE '${CodeBuildProject}' | fields @timestamp, @message\n| sort @timestamp desc\n| limit 100",
+                  "region": "${AWS::Region}",
+                  "stacked": false,
+                  "view": "table",
+                  "title": "Last 100 log lines"
+                }
+              }
+            ]
+        }
+  TriggerCodeBuildEveryMinute:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: cron(* * * * ? *)
+      Targets:
+        - Arn: !GetAtt CodeBuildProject.Arn
+          RoleArn: !GetAtt EventRole.Arn
+          Id: CodeBuild
+  EventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - events.amazonaws.com
+      Policies:
+      - PolicyName: CloudWatchEventPolicy
+        PolicyDocument:
+          Statement:
+          - Action:
+            - codebuild:StartBuild
+            Effect: Allow
+            Resource: !GetAtt CodeBuildProject.Arn
+
+Outputs:
+  CodeBuildJobUrl:
+    Value: !Sub https://console.aws.amazon.com/codesuite/codebuild/${AWS::AccountId}/projects/${CodeBuildProject}
+  CloudWatchDashboardUrl:
+    Value: !Sub https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${CloudWatchDashboard}
