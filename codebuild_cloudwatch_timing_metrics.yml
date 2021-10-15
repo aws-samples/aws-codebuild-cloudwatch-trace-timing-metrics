@@ -5,6 +5,12 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: A PoC for publishing trace timing metrics to Amazon CloudWatch in an AWS CodeBuild project
 
+Parameters:
+  ConcurrentBuildLimit:
+    Type: String
+    Default: 5
+    Description: Maximum number of concurrent builds for this project. If you run into issues with build concurrency limits in your AWS account, change this to 1.
+
 Resources:
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
@@ -15,7 +21,7 @@ Resources:
         Type: LOCAL
         Modes: 
           - LOCAL_DOCKER_LAYER_CACHE
-      ConcurrentBuildLimit: 5
+      ConcurrentBuildLimit: !Ref ConcurrentBuildLimit
       Description: CodeBuild POC with custom CloudWatch metrics
       Environment: 
         ComputeType: BUILD_GENERAL1_SMALL
